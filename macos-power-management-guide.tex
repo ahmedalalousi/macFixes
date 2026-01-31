@@ -1,0 +1,379 @@
+\documentclass[a4paper,11pt]{article}
+
+% XeLaTeX/LuaLaTeX packages
+\usepackage{fontspec}
+\usepackage[british]{babel}
+
+% Set Helvetica Neue as main font (macOS)
+% If Helvetica Neue is not available, falls back to Helvetica
+\IfFontExistsTF{Helvetica Neue}{
+    \setmainfont{Helvetica Neue}[
+        UprightFont = *,
+        BoldFont = * Bold,
+        ItalicFont = * Italic,
+        BoldItalicFont = * Bold Italic
+    ]
+}{
+    \setmainfont{Helvetica}
+}
+
+\IfFontExistsTF{Menlo}{
+    \setmonofont{Menlo}[Scale=0.85]
+}{
+    \setmonofont{Courier New}[Scale=0.85]
+}
+
+% Page layout
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{parskip}
+
+% Tables and formatting
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{colortbl}
+
+% Code listings
+\usepackage{listings}
+\lstset{
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    backgroundcolor=\color{gray!10},
+    xleftmargin=0.5cm,
+    framexleftmargin=0.5cm,
+    numbers=none,
+    showstringspaces=false,
+    columns=flexible
+}
+
+% Hyperlinks
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black
+}
+
+% Headers and footers
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\leftmark}
+\fancyhead[R]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% Title information
+\title{\textbf{macOS Power Management \& System Stability Guide}\\[0.5em]
+\large MacBook Pro 16,2 (2020) Troubleshooting Reference}
+\author{System Configuration Documentation}
+\date{31 January 2026}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\newpage
+
+% ============================================================================
+\section{Executive Summary}
+% ============================================================================
+
+This document summarises the diagnosis and resolution of critical system issues on a MacBook Pro 16,2 (Intel, 2020) running macOS 26.2, including:
+
+\begin{itemize}
+    \item WindowServer crashes due to thermal throttling
+    \item Laptop overheating in bag (failure to sleep on lid close)
+    \item Battery drain from sleep assertion blockers
+    \item High CPU usage from iCloud and Spotlight processes
+    \item Touch ID failures after power events
+\end{itemize}
+
+All issues were resolved through a combination of SMC reset, power management configuration, removal of problematic software, and installation of a persistent process throttling daemon.
+
+% ============================================================================
+\section{Problems Identified}
+% ============================================================================
+
+\subsection{WindowServer Crash}
+
+\textbf{Root Cause:} Instagram web tab in Chrome consumed 101\%+ CPU for an extended period, causing thermal throttling to 31\% CPU speed. The Intel GPU driver stalled under thermal stress during Metal operations, causing WindowServer to hang.
+
+\textbf{Symptoms:}
+\begin{itemize}
+    \item GPU watchdog timeout during display state transition
+    \item ThermalPressureLevelHeavy warnings
+    \item System unresponsive, required force restart
+\end{itemize}
+
+\subsection{Laptop Overheating in Bag}
+
+\textbf{Root Cause:} SMC setting \texttt{AppleClamshellCausesSleep} was set to \texttt{No}, preventing the system from sleeping when the lid was closed.
+
+\textbf{Discovery:}
+\begin{lstlisting}[language=bash]
+ioreg -r -k AppleClamshellCausesSleep | grep AppleClamshellCausesSleep
+# Returned: "AppleClamshellCausesSleep" = No
+\end{lstlisting}
+
+\subsection{Battery Drain (Lid Open)}
+
+\textbf{Root Cause:} Multiple processes holding \texttt{PreventUserIdleSystemSleep} assertions:
+
+\begin{itemize}
+    \item \textbf{WhatsApp:} Held \texttt{cameracaptured-idleSleepPreventionForBWFigCaptureDevice} for 34+ minutes
+    \item \textbf{coreaudiod:} Audio contexts from BlackHole driver, Teams audio driver, and Chrome
+    \item \textbf{Various sync daemons:} cloudd, bird, contactsd, mds
+\end{itemize}
+
+\subsection{iCloud Sync CPU Usage}
+
+\textbf{Root Cause:} 67 orphaned iCloud containers from uninstalled apps, causing \texttt{fileproviderd} to run at 174\% CPU for hours.
+
+\subsection{Touch ID Failure}
+
+\textbf{Root Cause:} Biometric daemons lose synchronisation with the Secure Enclave after certain power events (battery exhaustion, problematic sleep/wake cycles).
+
+% ============================================================================
+\section{Solutions Applied}
+% ============================================================================
+
+\subsection{SMC Reset (Critical)}
+
+The SMC reset fixed the clamshell sleep issue. For MacBook Pro with T2 chip:
+
+\begin{enumerate}
+    \item Shut down the Mac completely
+    \item Press and hold \textbf{Control + Option + Shift} (left side) for 7 seconds
+    \item While holding those keys, press and hold the \textbf{Power button} for 7 seconds
+    \item Release all keys, wait a few seconds
+    \item Press Power to turn on
+\end{enumerate}
+
+\textbf{Verification:}
+\begin{lstlisting}[language=bash]
+ioreg -r -k AppleClamshellCausesSleep | grep AppleClamshellCausesSleep
+# Should return: "AppleClamshellCausesSleep" = Yes
+\end{lstlisting}
+
+\subsection{Power Management Settings}
+
+\begin{lstlisting}[language=bash]
+# Battery settings
+sudo pmset -b sleep 15
+sudo pmset -b displaysleep 10
+sudo pmset -b disksleep 10
+
+# AC power settings (never sleep with lid open)
+sudo pmset -c sleep 0
+sudo pmset -c displaysleep 10
+
+# Both power sources
+sudo pmset -a womp 0              # Disable network wake
+sudo pmset -a proximitywake 0     # Disable proximity wake
+sudo pmset -a tcpkeepalive 0      # Disable TCP keepalive
+sudo pmset -a ttyskeepawake 0     # Disable terminal keepawake
+sudo pmset -a standbydelayhigh 900
+sudo pmset -a standbydelaylow 300
+\end{lstlisting}
+
+\subsection{Software Removed}
+
+The following software was identified as problematic and removed:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Software} & \textbf{Issue} & \textbf{Impact} \\
+\midrule
+BlackHole 2ch & Phantom audio contexts & Battery drain \\
+Adobe Acrobat DC & CGPDFService CPU usage & CPU/thermal \\
+Adobe Creative Cloud & Finder sync overhead & CPU usage \\
+Foxit PDF Editor & PDF rendering conflicts & CPU usage \\
+Weather Widget & Stuck at 72\% CPU & CPU/thermal \\
+\rowcolor{gray!20}
+Adobe Chrome Extension & PDF rendering triggers & CPU usage \\
+\bottomrule
+\end{tabular}
+\caption{Removed problematic software}
+\end{table}
+
+\subsection{iCloud Cache Reset}
+
+\begin{lstlisting}[language=bash]
+# Kill iCloud processes
+killall -9 fileproviderd cloudd bird 2>/dev/null
+
+# Clear sync caches
+rm -rf ~/Library/Application\ Support/CloudDocs/session/
+rm -rf ~/Library/Caches/CloudKit/
+rm -rf ~/Library/Caches/com.apple.bird/
+\end{lstlisting}
+
+\subsection{Spotlight Index Control}
+
+\begin{lstlisting}[language=bash]
+# Disable Spotlight temporarily
+sudo mdutil -a -i off
+
+# Re-enable Spotlight
+sudo mdutil -a -i on
+
+# Exclude folders with large PDFs
+touch ~/Documents/Automotive/.metadata_never_index
+\end{lstlisting}
+
+\subsection{Touch ID Reset}
+
+When Touch ID stops working after power events:
+
+\begin{lstlisting}[language=bash]
+sudo killall biometrickitd BiomeAgent biomed TouchBarServer
+\end{lstlisting}
+
+% ============================================================================
+\section{Persistent Process Throttling}
+% ============================================================================
+
+A launch daemon was created to automatically throttle iCloud and Spotlight processes, preventing them from consuming excessive CPU resources.
+
+\subsection{Throttler Script}
+
+Location: \texttt{/Users/ahmedal/bin/icloud-throttle.sh}
+
+The script monitors and applies \texttt{renice 20} to:
+\begin{itemize}
+    \item \texttt{fileproviderd} -- iCloud file provider
+    \item \texttt{cloudd} -- CloudKit daemon
+    \item \texttt{bird} -- iCloud Drive daemon
+    \item \texttt{mds} -- Spotlight metadata server
+    \item \texttt{mds\_stores} -- Spotlight storage
+\end{itemize}
+
+\subsection{Launch Daemon}
+
+Location: \texttt{/Library/LaunchDaemons/com.user.icloud-throttle.plist}
+
+The daemon:
+\begin{itemize}
+    \item Starts at boot (before user login)
+    \item Runs as root (required for Spotlight processes)
+    \item Monitors every 30 seconds
+    \item Re-throttles processes if they restart
+    \item Logs to \texttt{/tmp/icloud-throttle.out}
+\end{itemize}
+
+% ============================================================================
+\section{Verification Commands}
+% ============================================================================
+
+\subsection{Check Sleep Blockers}
+
+\begin{lstlisting}[language=bash]
+pmset -g assertions
+\end{lstlisting}
+
+Look for \texttt{PreventUserIdleSystemSleep = 1} or \texttt{PreventSystemSleep = 1}.
+
+\subsection{Check Thermal Status}
+
+\begin{lstlisting}[language=bash]
+pmset -g therm
+\end{lstlisting}
+
+\texttt{CPU\_Speed\_Limit} should be 100 (no throttling).
+
+\subsection{Check Top CPU Consumers}
+
+\begin{lstlisting}[language=bash]
+ps aux | sort -nrk 3 | head -5
+\end{lstlisting}
+
+\subsection{Check Sleep/Wake History}
+
+\begin{lstlisting}[language=bash]
+pmset -g log | grep -E "(Entering|Wake from)" | tail -10
+\end{lstlisting}
+
+\subsection{Check Throttler Status}
+
+\begin{lstlisting}[language=bash]
+tail -f /tmp/icloud-throttle.out
+\end{lstlisting}
+
+\subsection{Check Audio Assertions}
+
+\begin{lstlisting}[language=bash]
+pmset -g assertions | grep -i audio
+\end{lstlisting}
+
+Should return nothing when idle.
+
+% ============================================================================
+\section{Before Leaving Mac Unattended on Battery}
+% ============================================================================
+
+\begin{enumerate}
+    \item \textbf{Check for sleep blockers:}
+    \begin{lstlisting}[language=bash]
+pmset -g assertions | grep -E "Prevent|Sleep"
+    \end{lstlisting}
+    
+    \item \textbf{Quit these apps properly (Cmd+Q):}
+    \begin{itemize}
+        \item WhatsApp
+        \item Microsoft Teams
+        \item Close Chrome tabs with audio/video
+    \end{itemize}
+    
+    \item \textbf{Or simply close the lid} -- this now forces sleep regardless of any assertions.
+\end{enumerate}
+
+% ============================================================================
+\section{File Locations}
+% ============================================================================
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{File} & \textbf{Purpose} \\
+\midrule
+\texttt{/Users/ahmedal/bin/icloud-throttle.sh} & Throttler script \\
+\texttt{/Library/LaunchDaemons/com.user.icloud-throttle.plist} & Launch daemon \\
+\texttt{/tmp/icloud-throttle.out} & Throttler log \\
+\texttt{/tmp/icloud-throttle.log} & Throttler events \\
+\bottomrule
+\end{tabular}
+\caption{Important file locations}
+\end{table}
+
+% ============================================================================
+\section{Quick Reference}
+% ============================================================================
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lp{8cm}@{}}
+\toprule
+\textbf{Problem} & \textbf{Quick Fix} \\
+\midrule
+Touch ID not working & \texttt{sudo killall biometrickitd BiomeAgent biomed TouchBarServer} \\
+\addlinespace
+Check sleep blockers & \texttt{pmset -g assertions} \\
+\addlinespace
+Check thermal status & \texttt{pmset -g therm} \\
+\addlinespace
+Monitor throttler & \texttt{tail -f /tmp/icloud-throttle.out} \\
+\addlinespace
+Kill runaway process & \texttt{kill -9 <PID>} \\
+\addlinespace
+Reset iCloud sync & \texttt{killall -9 fileproviderd cloudd bird} \\
+\bottomrule
+\end{tabular}
+\caption{Quick reference commands}
+\end{table}
+
+\end{document}
