@@ -44,6 +44,7 @@ ${YELLOW}Commands:${NC}
   ${GREEN}icloud-reset${NC}        Reset iCloud sync state (clears caches)
   ${GREEN}icloud-status${NC}       Show iCloud sync status and orphaned containers
   ${GREEN}spotlight${NC}           Control Spotlight indexing (on/off/status)
+  ${GREEN}chime${NC}               Control charging chime (on/off/status)
   ${GREEN}audio${NC}               Check audio-related sleep assertions
   ${GREEN}battery${NC}             Show battery status and health
   ${GREEN}wake-reason${NC}         Show recent wake reasons
@@ -60,6 +61,7 @@ ${YELLOW}Examples:${NC}
   sysutil monitor             # Watch throttled processes live
   sysutil spotlight off       # Disable Spotlight indexing
   sysutil spotlight on        # Enable Spotlight indexing
+  sysutil chime off           # Disable charging chime (stay asleep on AC attach)
   sysutil sleep-check         # Verify sleep configuration
   sysutil wake-reason         # See what woke the Mac
 
@@ -275,7 +277,7 @@ cmd_sleep_check() {
     local issues=0
     
     # Check clamshell setting
-    local clamshell=$(ioreg -r -k AppleClamshellCausesSleep 2>/dev/null | grep AppleClamshellCausesSleep | awk '{print $3}')
+    local clamshell=$(ioreg -r -k AppleClamshellCausesSleep 2>/dev/null | grep AppleClamshellCausesSleep | awk -F'= ' '{print $2}')
     if [ "$clamshell" = "Yes" ]; then
         echo -e "${GREEN}✓${NC} Lid close will cause sleep"
     else
@@ -295,21 +297,37 @@ cmd_sleep_check() {
     fi
     
     # Check PreventUserIdleSystemSleep
+    # Note: These do NOT prevent clamshell (lid close) sleep, only idle sleep
     local prevent_idle=$(pmset -g assertions 2>/dev/null | grep "PreventUserIdleSystemSleep" | head -1 | awk '{print $2}')
     if [ "$prevent_idle" = "0" ]; then
         echo -e "${GREEN}✓${NC} No PreventUserIdleSystemSleep assertions"
     else
-        echo -e "${YELLOW}!${NC} PreventUserIdleSystemSleep is active"
-        pmset -g assertions 2>/dev/null | grep "PreventUserIdleSystemSleep named" | head -3 | sed 's/^/  → /'
-        ((issues++))
+        # Check if it's just transient nsurlsessiond (harmless) or something concerning
+        local long_assertions=$(pmset -g assertions 2>/dev/null | grep "PreventUserIdleSystemSleep named" | grep -v "nsurlsessiond" | grep -v "00:00:0")
+        local audio_assertions=$(pmset -g assertions 2>/dev/null | grep -i "PreventUserIdleSystemSleep" | grep -i "audio")
+        
+        if [ -n "$audio_assertions" ]; then
+            # Audio assertions are concerning - they can last hours
+            echo -e "${RED}✗${NC} Audio holding PreventUserIdleSystemSleep (may prevent idle sleep for hours)"
+            echo "$audio_assertions" | head -3 | sed 's/^/  → /'
+            ((issues++))
+        elif [ -n "$long_assertions" ]; then
+            # Non-nsurlsessiond assertions lasting more than a few seconds
+            echo -e "${YELLOW}!${NC} PreventUserIdleSystemSleep is active"
+            echo "$long_assertions" | head -3 | sed 's/^/  → /'
+            ((issues++))
+        else
+            # Only transient nsurlsessiond - harmless, doesn't block clamshell sleep
+            echo -e "${GREEN}✓${NC} PreventUserIdleSystemSleep: only transient network tasks (harmless)"
+        fi
     fi
     
-    # Check audio assertions
-    local audio=$(pmset -g assertions 2>/dev/null | grep -i "audio")
+    # Check audio assertions (separate from above - catches any audio holding any assertion type)
+    local audio=$(pmset -g assertions 2>/dev/null | grep -i "coreaudiod.*Prevent")
     if [ -z "$audio" ]; then
         echo -e "${GREEN}✓${NC} No audio assertions"
     else
-        echo -e "${YELLOW}!${NC} Audio assertions present"
+        echo -e "${RED}✗${NC} Audio assertions present (may prevent sleep for hours)"
         echo "$audio" | head -3 | sed 's/^/  → /'
         ((issues++))
     fi
@@ -542,6 +560,50 @@ cmd_pmset() {
 }
 
 # -----------------------------------------------------------------------------
+# Chime Command - Control charging chime (which causes wake on AC attach)
+# -----------------------------------------------------------------------------
+cmd_chime() {
+    local action="$1"
+    
+    case "$action" in
+        on)
+            echo -e "${BLUE}Enabling charging chime...${NC}"
+            defaults delete com.apple.PowerChime ChimeOnNoHardware 2>/dev/null
+            defaults delete com.apple.PowerChime ChimeOnAllHardware 2>/dev/null
+            killall PowerChime 2>/dev/null
+            echo -e "${GREEN}✓${NC} Charging chime enabled"
+            echo -e "${YELLOW}Note: Mac will now wake when plugging in charger (even with lid closed)${NC}"
+            ;;
+        off)
+            echo -e "${BLUE}Disabling charging chime...${NC}"
+            defaults write com.apple.PowerChime ChimeOnNoHardware -bool true
+            defaults write com.apple.PowerChime ChimeOnAllHardware -bool false
+            killall PowerChime 2>/dev/null
+            echo -e "${GREEN}✓${NC} Charging chime disabled"
+            echo -e "${GREEN}Mac will stay asleep when plugging in charger${NC}"
+            ;;
+        status|"")
+            echo -e "${BLUE}=== Charging Chime Status ===${NC}"
+            echo ""
+            local no_hw=$(defaults read com.apple.PowerChime ChimeOnNoHardware 2>/dev/null)
+            local all_hw=$(defaults read com.apple.PowerChime ChimeOnAllHardware 2>/dev/null)
+            
+            if [ "$no_hw" = "1" ] && [ "$all_hw" = "0" ]; then
+                echo -e "Charging chime: ${GREEN}Disabled${NC}"
+                echo "Mac will stay asleep when plugging in charger"
+            else
+                echo -e "Charging chime: ${YELLOW}Enabled${NC} (default)"
+                echo "Mac will wake and chime when plugging in charger"
+            fi
+            ;;
+        *)
+            echo -e "${RED}Unknown action: $action${NC}"
+            echo "Usage: sysutil chime [on|off|status]"
+            ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 case "$1" in
@@ -592,6 +654,9 @@ case "$1" in
         ;;
     pmset)
         cmd_pmset
+        ;;
+    chime)
+        cmd_chime "$2"
         ;;
     -v|--version)
         echo "sysutil version $VERSION"

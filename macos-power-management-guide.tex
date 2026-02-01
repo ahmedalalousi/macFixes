@@ -65,9 +65,9 @@
 
 % Title information
 \title{\textbf{macOS Power Management \& System Stability Guide}\\[0.5em]
-\large MacBook Pro 16,2 (2020) Troubleshooting Reference}
+\large MacBook Pro 13" (2020) Troubleshooting Reference}
 \author{Ahmed Al-Alousi}
-\date{31 January 2026}
+\date{1 February 2026}
 
 \begin{document}
 
@@ -189,6 +189,7 @@ The following software was identified as problematic and removed:
 \textbf{Software} & \textbf{Issue} & \textbf{Impact} \\
 \midrule
 BlackHole 2ch & Phantom audio contexts & Battery drain \\
+MSTeamsAudioDevice.driver & 22+ hour sleep assertions & Prevents sleep \\
 Adobe Acrobat DC & CGPDFService CPU usage & CPU/thermal \\
 Adobe Creative Cloud & Finder sync overhead & CPU usage \\
 Foxit PDF Editor & PDF rendering conflicts & CPU usage \\
@@ -360,20 +361,49 @@ pmset -g assertions | grep -E "Prevent|Sleep"
 \toprule
 \textbf{Problem} & \textbf{Quick Fix} \\
 \midrule
-Touch ID not working & \texttt{sudo killall biometrickitd BiomeAgent biomed TouchBarServer} \\
+Touch ID not working & \texttt{sysutil touchid} \\
 \addlinespace
-Check sleep blockers & \texttt{pmset -g assertions} \\
+Check sleep readiness & \texttt{sysutil sleep-check} \\
 \addlinespace
-Check thermal status & \texttt{pmset -g therm} \\
+Check sleep blockers & \texttt{sysutil assertions} \\
 \addlinespace
-Monitor throttler & \texttt{tail -f /tmp/icloud-throttle.out} \\
+Check thermal status & \texttt{sysutil thermal} \\
 \addlinespace
-Kill runaway process & \texttt{kill -9 <PID>} \\
+Disable charging chime & \texttt{sysutil chime off} \\
 \addlinespace
-Reset iCloud sync & \texttt{killall -9 fileproviderd cloudd bird} \\
+Monitor throttler & \texttt{sysutil monitor} \\
+\addlinespace
+Throttle iCloud/Spotlight & \texttt{sysutil throttle} \\
+\addlinespace
+Check why Mac woke & \texttt{sysutil wake-reason} \\
+\addlinespace
+Reset iCloud sync & \texttt{sysutil icloud-reset} \\
 \bottomrule
 \end{tabular}
 \caption{Quick reference commands}
 \end{table}
+
+% ============================================================================
+\section{Known Hardware Quirks}
+% ============================================================================
+
+\subsection{Wake on AC Attach}
+
+On some MacBook Pro models (including 2020 13"), plugging in the USB-C charger while the lid is closed causes the Mac to wake briefly. This is due to the lid sensor (AppleACPILid) detecting a phantom ``lid event'' when power is connected.
+
+\textbf{Symptoms:}
+\begin{itemize}
+    \item Charging chime plays when plugging in charger with lid closed
+    \item Mac wakes to full power momentarily
+\end{itemize}
+
+\textbf{Mitigation:}
+\begin{itemize}
+    \item Disable the chime: \texttt{sysutil chime off}
+    \item Plug in charger before closing lid
+    \item The Mac will return to sleep within $\sim$5 minutes automatically
+\end{itemize}
+
+This is a hardware/firmware behaviour that cannot be fully disabled in software.
 
 \end{document}

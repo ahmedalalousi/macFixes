@@ -153,6 +153,7 @@ A comprehensive utility for managing macOS power, processes, and diagnostics.
 | `icloud-reset` | Reset iCloud sync state (clears caches) |
 | `icloud-status` | Show iCloud sync status |
 | `spotlight on\|off\|status` | Control Spotlight indexing |
+| `chime on\|off\|status` | Control charging chime (and wake on AC attach) |
 | `audio` | Check audio-related sleep assertions |
 | `battery` | Battery status and health |
 | `wake-reason` | Show recent wake reasons |
@@ -215,15 +216,26 @@ WhatsApp: "cameracaptured-idleSleepPreventionForBWFigCaptureDevice"
 
 ### 3. Phantom Audio Driver Contexts
 
-**Symptom:** `coreaudiod` holds sleep assertions for 23+ minutes
+**Symptom:** `coreaudiod` holds sleep assertions for 22+ hours
 
-**Cause:** Virtual audio drivers (BlackHole, Teams Audio Device) create persistent audio contexts
+**Cause:** Virtual audio drivers (BlackHole, Microsoft Teams Audio Device) create persistent audio contexts that hold `PreventUserIdleSystemSleep` assertions indefinitely, even when no audio is playing.
 
 **Fix:** Remove unused virtual audio drivers:
 ```bash
+# Remove BlackHole
 sudo rm -rf /Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver
+
+# Remove Microsoft Teams Audio Device
+sudo rm -rf /Library/Audio/Plug-Ins/HAL/MSTeamsAudioDevice.driver
+
+# Restart audio subsystem
 sudo killall coreaudiod
+
+# Verify removal
+ls -la /Library/Audio/Plug-Ins/HAL/
 ```
+
+> **Note:** Microsoft Teams will still work fine for calls without its virtual audio device - it will use the built-in audio directly.
 
 ### 4. iCloud Sync Loop
 
@@ -248,6 +260,28 @@ sysutil touchid
 # or manually:
 sudo killall biometrickitd BiomeAgent biomed TouchBarServer
 ```
+
+### 6. Wake on AC Attach (Hardware Quirk)
+
+**Symptom:** Mac wakes up and plays charging chime when plugging in charger, even with lid closed
+
+**Cause:** On some MacBook Pro models (including 2020 13"), the lid sensor (AppleACPILid) detects a phantom "lid event" when USB-C power is connected. This is a hardware/firmware behaviour that triggers WindowServer to create a `UserIsActive` assertion.
+
+**Evidence in logs:**
+```
+WindowServer TurnedOn UserIsActive "com.apple.iohideventsystem.queue.tickle service:AppleACPILid"
+```
+
+**Mitigation:** This cannot be fully fixed in software, but you can:
+
+1. **Disable the charging chime** (Mac will still wake briefly but silently):
+```bash
+sysutil chime off
+```
+
+2. **Plug in charger before closing lid** - avoids the wake entirely
+
+3. **Don't worry** - the Mac will return to sleep within ~5 minutes automatically (unlike before when audio drivers kept it awake for 22+ hours)
 
 ---
 
@@ -294,6 +328,7 @@ Battery drains to 0%
 | Software | Issue | Impact |
 |----------|-------|--------|
 | BlackHole 2ch | Phantom audio contexts | Battery drain |
+| MSTeamsAudioDevice.driver | Holds sleep assertions for 22+ hours | Prevents sleep entirely |
 | Adobe Acrobat DC | CGPDFService CPU spikes | Thermal issues |
 | Adobe Creative Cloud | Finder sync overhead | CPU usage |
 | Foxit PDF Editor | PDF rendering conflicts | CPU spikes |
@@ -445,7 +480,7 @@ macos-power-toolkit/
 
 ## Tested Configuration
 
-- **Hardware:** MacBook Pro 16,2 (2020, Intel)
+- **Hardware:** MacBook Pro 13" (2020, Intel)
 - **macOS:** 26.2
 - **Chip:** Intel Core i5 with Intel Iris Plus Graphics
 - **Bash:** 5.x (via Homebrew)
@@ -477,7 +512,7 @@ Contributions are welcome! If you've encountered similar issues or have improvem
 
 ---
 
-## 📜 Licence
+## Licence
 
 This project is licensed under the MIT Licence - see the [LICENSE](LICENSE) file for details.
 
