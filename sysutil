@@ -130,14 +130,14 @@ cmd_status() {
     echo -e "${YELLOW}▸ Top CPU Processes${NC}"
     if [ "$show_full_path" = true ]; then
         # Show full path
-        ps aux | sort -nrk 3 | head -5 | while read -r line; do
+        ps aux | tail -n +2 | sort -nrk 3 | head -5 | while read -r line; do
             local cpu=$(echo "$line" | awk '{print $3}')
             local cmd=$(echo "$line" | awk '{for(i=11;i<=NF;i++) printf "%s ", $i; print ""}' | xargs)
             printf "  %6.1f%%  %s\n" "$cpu" "$cmd"
         done
     else
         # Show clean app names only
-        ps aux | sort -nrk 3 | head -5 | while read -r line; do
+        ps aux | tail -n +2 | sort -nrk 3 | head -5 | while read -r line; do
             local cpu=$(echo "$line" | awk '{print $3}')
             local cmd=$(echo "$line" | awk '{print $11}')
             # Extract app name from path
@@ -176,7 +176,7 @@ cmd_top() {
     if [ "$show_full_path" = true ]; then
         printf "%-8s %8s %8s  %s\n" "PID" "CPU%" "MEM%" "COMMAND"
         echo "─────────────────────────────────────────────────────────────────────────────"
-        ps aux | sort -nrk 3 | head -15 | while read -r line; do
+        ps aux | tail -n +2 | sort -nrk 3 | head -15 | while read -r line; do
             local pid=$(echo "$line" | awk '{print $2}')
             local cpu=$(echo "$line" | awk '{print $3}')
             local mem=$(echo "$line" | awk '{print $4}')
@@ -186,7 +186,7 @@ cmd_top() {
     else
         printf "%-8s %-30s %8s %8s\n" "PID" "PROCESS" "CPU%" "MEM%"
         echo "────────────────────────────────────────────────────────────────"
-        ps aux | sort -nrk 3 | head -15 | while read -r line; do
+        ps aux | tail -n +2 | sort -nrk 3 | head -15 | while read -r line; do
             local pid=$(echo "$line" | awk '{print $2}')
             local cpu=$(echo "$line" | awk '{print $3}')
             local mem=$(echo "$line" | awk '{print $4}')

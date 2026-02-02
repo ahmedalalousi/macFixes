@@ -16,13 +16,13 @@ CHECK_INTERVAL=30
 LOG_FILE="/tmp/icloud-throttle.log"
 
 # Processes to throttle (user processes)
-USER_PROCESSES="fileproviderd cloudd bird"
+USER_PROCESSES="fileproviderd cloudd bird itunescloudd"
 
 # Processes that need sudo (root processes)
 ROOT_PROCESSES="mds mds_stores"
 
-# Track PIDs
-declare -A TRACKED_PIDS
+# Track PIDs we've already logged
+declare -A LOGGED_PIDS
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
@@ -31,24 +31,24 @@ log() {
 throttle_process() {
     local name=$1
     local use_sudo=$2
-    local pid=$(pgrep -x "$name" | head -1)
     
-    if [ -n "$pid" ]; then
+    # Get ALL PIDs for this process name (not just first one)
+    for pid in $(pgrep -x "$name"); do
         local current_nice=$(ps -o nice= -p "$pid" 2>/dev/null | tr -d ' ')
         
-        if [ "$current_nice" != "$NICE_LEVEL" ]; then
+        if [ -n "$current_nice" ] && [ "$current_nice" != "$NICE_LEVEL" ]; then
             if [ "$use_sudo" = "yes" ]; then
                 sudo renice $NICE_LEVEL -p "$pid" >/dev/null 2>&1
             else
                 renice $NICE_LEVEL -p "$pid" >/dev/null 2>&1
             fi
             log "Throttled $name (PID: $pid) from nice $current_nice to $NICE_LEVEL"
-            TRACKED_PIDS[$name]=$pid
-        elif [ "${TRACKED_PIDS[$name]}" != "$pid" ]; then
+            LOGGED_PIDS["$name:$pid"]=1
+        elif [ -z "${LOGGED_PIDS["$name:$pid"]}" ]; then
             log "New PID detected for $name (PID: $pid) - already throttled"
-            TRACKED_PIDS[$name]=$pid
+            LOGGED_PIDS["$name:$pid"]=1
         fi
-    fi
+    done
 }
 
 show_status() {
@@ -58,12 +58,14 @@ show_status() {
     echo "------------------------------------------------"
     
     for name in $USER_PROCESSES $ROOT_PROCESSES; do
-        local pid=$(pgrep -x "$name" | head -1)
-        if [ -n "$pid" ]; then
+        local found=0
+        for pid in $(pgrep -x "$name"); do
+            found=1
             local nice=$(ps -o nice= -p "$pid" 2>/dev/null | tr -d ' ')
             local cpu=$(ps -o %cpu= -p "$pid" 2>/dev/null | tr -d ' ')
             printf "%-20s %8s %8s %8s\n" "$name" "$pid" "$nice" "$cpu"
-        else
+        done
+        if [ $found -eq 0 ]; then
             printf "%-20s %8s %8s %8s\n" "$name" "-" "-" "-"
         fi
     done
