@@ -277,13 +277,30 @@ cmd_sleep_check() {
     local issues=0
     
     # Check clamshell setting
+    # Note: AppleClamshellCausesSleep is only "Yes" when lid is closed or external display connected
+    # When lid is open, it's "No" which is normal
+    local lid_state=$(ioreg -r -k AppleClamshellState 2>/dev/null | grep AppleClamshellState | awk -F'= ' '{print $2}')
     local clamshell=$(ioreg -r -k AppleClamshellCausesSleep 2>/dev/null | grep AppleClamshellCausesSleep | awk -F'= ' '{print $2}')
-    if [ "$clamshell" = "Yes" ]; then
-        echo -e "${GREEN}✓${NC} Lid close will cause sleep"
+    
+    if [ "$lid_state" = "Yes" ]; then
+        # Lid is closed - check if clamshell sleep is enabled
+        if [ "$clamshell" = "Yes" ]; then
+            echo -e "${GREEN}✓${NC} Lid is closed and clamshell sleep is active"
+        else
+            echo -e "${RED}✗${NC} Lid is closed but clamshell sleep NOT active"
+            echo "  → SMC reset required"
+            ((issues++))
+        fi
     else
-        echo -e "${RED}✗${NC} Lid close will NOT cause sleep"
-        echo "  → SMC reset required"
-        ((issues++))
+        # Lid is open - can't definitively check clamshell setting
+        # Check if sleep worked recently instead
+        local recent_clamshell=$(pmset -g log 2>/dev/null | grep "Clamshell Sleep" | tail -1)
+        if [ -n "$recent_clamshell" ]; then
+            echo -e "${GREEN}✓${NC} Clamshell sleep working (verified from recent history)"
+        else
+            echo -e "${YELLOW}?${NC} Clamshell sleep status unknown (lid is open, no recent sleep)"
+            echo "  → Close lid to test, or run 'sysutil sleep-test'"
+        fi
     fi
     
     # Check PreventSystemSleep
