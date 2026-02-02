@@ -122,7 +122,7 @@ cmd_status() {
     
     # Top processes
     echo -e "${YELLOW}▸ Top CPU Processes${NC}"
-    ps aux | sort -nrk 3 | head -5 | awk '{printf "  %-30s %5.1f%%\n", substr($11,1,30), $3}'
+    ps aux | sort -nrk 3 | head -5 | awk '{printf "  %-150s %5.1f%%\n", substr($11,1,150), $3}'
     echo ""
     
     # Throttler status
