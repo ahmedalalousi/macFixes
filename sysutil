@@ -32,8 +32,8 @@ ${BLUE}macOS System Utility v$VERSION${NC}
 ${YELLOW}Usage:${NC} sysutil <command> [options]
 
 ${YELLOW}Commands:${NC}
-  ${GREEN}status${NC}              Show overall system status
-  ${GREEN}top${NC}                 Show top CPU-consuming processes
+  ${GREEN}status${NC} [--full]     Show overall system status
+  ${GREEN}top${NC} [--full]        Show top CPU-consuming processes
   ${GREEN}thermal${NC}             Show thermal status and CPU throttling
   ${GREEN}assertions${NC}          Show all sleep blockers/assertions
   ${GREEN}throttle${NC}            Manually throttle iCloud/Spotlight processes
@@ -51,11 +51,14 @@ ${YELLOW}Commands:${NC}
   ${GREEN}pmset${NC}               Show current power management settings
 
 ${YELLOW}Options:${NC}
+  --full, -f          Show full process paths (for status/top commands)
   -h, --help          Show this help message
   -v, --version       Show version
 
 ${YELLOW}Examples:${NC}
   sysutil status              # Quick system health check
+  sysutil status --full       # Status with full process paths
+  sysutil top --full          # Top processes with full paths
   sysutil throttle            # Manually renice iCloud/Spotlight
   sysutil touchid             # Fix Touch ID after sleep
   sysutil monitor             # Watch throttled processes live
@@ -72,6 +75,9 @@ EOF
 # Status Command
 # -----------------------------------------------------------------------------
 cmd_status() {
+    local show_full_path=false
+    [ "$1" = "--full" ] || [ "$1" = "-f" ] && show_full_path=true
+    
     echo -e "${BLUE}╔═══════════════════════════════════════════╗${NC}"
     echo -e "${BLUE}║         System Status Overview            ║${NC}"
     echo -e "${BLUE}╚═══════════════════════════════════════════╝${NC}"
@@ -122,7 +128,30 @@ cmd_status() {
     
     # Top processes
     echo -e "${YELLOW}▸ Top CPU Processes${NC}"
-    ps aux | sort -nrk 3 | head -5 | awk '{printf "  %-150s %5.1f%%\n", substr($11,1,150), $3}'
+    if [ "$show_full_path" = true ]; then
+        # Show full path
+        ps aux | sort -nrk 3 | head -5 | while read -r line; do
+            local cpu=$(echo "$line" | awk '{print $3}')
+            local cmd=$(echo "$line" | awk '{for(i=11;i<=NF;i++) printf "%s ", $i; print ""}' | xargs)
+            printf "  %6.1f%%  %s\n" "$cpu" "$cmd"
+        done
+    else
+        # Show clean app names only
+        ps aux | sort -nrk 3 | head -5 | while read -r line; do
+            local cpu=$(echo "$line" | awk '{print $3}')
+            local cmd=$(echo "$line" | awk '{print $11}')
+            # Extract app name from path
+            local name
+            if [[ "$cmd" == *".app"* ]]; then
+                # Extract "AppName.app" from path like /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+                name=$(echo "$cmd" | sed 's|.*/\([^/]*\.app\)/.*|\1|' | sed 's/\.app$//')
+            else
+                # Just get the basename for non-.app processes
+                name=$(basename "$cmd" 2>/dev/null || echo "$cmd")
+            fi
+            printf "  %-25s %6.1f%%\n" "$name" "$cpu"
+        done
+    fi
     echo ""
     
     # Throttler status
@@ -138,11 +167,40 @@ cmd_status() {
 # Top Command
 # -----------------------------------------------------------------------------
 cmd_top() {
+    local show_full_path=false
+    [ "$1" = "--full" ] || [ "$1" = "-f" ] && show_full_path=true
+    
     echo -e "${BLUE}=== Top CPU Processes ===${NC}"
     echo ""
-    printf "%-8s %-35s %8s %8s\n" "PID" "PROCESS" "CPU%" "MEM%"
-    echo "────────────────────────────────────────────────────────────────"
-    ps aux | sort -nrk 3 | head -15 | awk '{printf "%-8s %-35s %8.1f %8.1f\n", $2, substr($11,1,35), $3, $4}'
+    
+    if [ "$show_full_path" = true ]; then
+        printf "%-8s %8s %8s  %s\n" "PID" "CPU%" "MEM%" "COMMAND"
+        echo "─────────────────────────────────────────────────────────────────────────────"
+        ps aux | sort -nrk 3 | head -15 | while read -r line; do
+            local pid=$(echo "$line" | awk '{print $2}')
+            local cpu=$(echo "$line" | awk '{print $3}')
+            local mem=$(echo "$line" | awk '{print $4}')
+            local cmd=$(echo "$line" | awk '{for(i=11;i<=NF;i++) printf "%s ", $i; print ""}' | xargs)
+            printf "%-8s %8.1f %8.1f  %s\n" "$pid" "$cpu" "$mem" "$cmd"
+        done
+    else
+        printf "%-8s %-30s %8s %8s\n" "PID" "PROCESS" "CPU%" "MEM%"
+        echo "────────────────────────────────────────────────────────────────"
+        ps aux | sort -nrk 3 | head -15 | while read -r line; do
+            local pid=$(echo "$line" | awk '{print $2}')
+            local cpu=$(echo "$line" | awk '{print $3}')
+            local mem=$(echo "$line" | awk '{print $4}')
+            local cmd=$(echo "$line" | awk '{print $11}')
+            # Extract app name from path
+            local name
+            if [[ "$cmd" == *".app"* ]]; then
+                name=$(echo "$cmd" | sed 's|.*/\([^/]*\.app\)/.*|\1|' | sed 's/\.app$//')
+            else
+                name=$(basename "$cmd" 2>/dev/null || echo "$cmd")
+            fi
+            printf "%-8s %-30s %8.1f %8.1f\n" "$pid" "$name" "$cpu" "$mem"
+        done
+    fi
 }
 
 # -----------------------------------------------------------------------------
@@ -625,10 +683,10 @@ cmd_chime() {
 # -----------------------------------------------------------------------------
 case "$1" in
     status)
-        cmd_status
+        cmd_status "$2"
         ;;
     top)
-        cmd_top
+        cmd_top "$2"
         ;;
     thermal)
         cmd_thermal
